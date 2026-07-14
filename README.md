@@ -10,7 +10,12 @@ Cross-platform (Linux/macOS/Windows) - only depends on Python and `adb` being on
 
 - **Python 3.10+**
 - **Android SDK Platform-Tools (`adb`)** on your `PATH` (or specified explicitly via the in-app Settings screen)
-- **USB Debugging** enabled on both devices, with the computer's RSA authorization fingerprint accepted on each device.
+- **USB Debugging (ADB) enabled** on both Android devices.
+
+### How to enable USB Debugging on your devices:
+1. **Enable Developer Options:** Go to *Settings* -> *About phone*, scroll to the bottom, and tap **Build number** 7 times until you see the notification "You are now a developer!".
+2. **Enable USB Debugging:** Go back to the main *Settings* menu, select *System* -> *Developer options* (or search for it), scroll down to the *Debugging* section, and toggle **USB debugging** to **On**.
+3. **Authorize Host Machine:** Connect the device to your computer via USB. A prompt asking *"Allow USB debugging?"* with the computer's RSA fingerprint will appear on-screen. Check **Always allow from this computer** and tap **Allow**.
 
 ---
 
