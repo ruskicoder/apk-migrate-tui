@@ -2,11 +2,9 @@
 
 Startup flow:
 1. Find adb.
-2. Check for incomplete sessions on disk → show SessionResumeScreen if any.
-3. DeviceSelectScreen (scan both devices → write session).
-4. AppListScreen (diff + batch migrate).
-5. Loop: 'change_devices' returns to DeviceSelectScreen for the same session.
-6. On quit or completion the session is already handled by AppListScreen.
+2. Check for incomplete migration sessions on disk → show SessionResumeScreen if any.
+3. If new flow: show ModeSelectScreen to choose between Migrate Mode and Manage Single Device Mode.
+4. Route accordingly to Migrate Mode loops or Per Device Mode loops.
 """
 
 from __future__ import annotations
@@ -21,7 +19,10 @@ from .logging_utils import setup_logger
 from .screens.app_list import AppListScreen
 from .screens.device_select import DeviceSelectScreen
 from .screens.dialogs import MessageScreen
+from .screens.mode_select import ModeSelectScreen
 from .screens.resume_screen import SessionResumeScreen
+from .screens.single_device_app_list import SingleDeviceAppScreen
+from .screens.single_device_select import SingleDeviceSelectScreen
 from .session import Session, SessionManager
 from .settings import Settings
 
@@ -61,6 +62,7 @@ class ApkMigrateApp(App[None]):
         incomplete = session_mgr.list_incomplete()
 
         active_session: Session | None = None
+        selected_mode: str | None = None
 
         if incomplete:
             self.logger.info("%d incomplete session(s) found on disk.", len(incomplete))
@@ -68,72 +70,108 @@ class ApkMigrateApp(App[None]):
                 SessionResumeScreen(incomplete, session_mgr)
             )
             if result is None:
-                # User chose "new session"
-                active_session = session_mgr.new_session()
+                # User chose "new session" -> will ask for mode
+                pass
             else:
-                # result is a Session
+                # result is a Session, meaning we automatically resume in "migrate" mode
                 active_session = result
+                selected_mode = "migrate"
                 self.logger.info("Resuming session %s", active_session.session_id)
-        else:
-            active_session = session_mgr.new_session()
 
         # ------------------------------------------------------------------
-        # Main loop (device select → app list → optionally loop back)
+        # Step 3: Choose TUI Mode if not resuming a session
         # ------------------------------------------------------------------
-        while True:
-            # If the session already has both sides scanned, we can jump
-            # straight to AppListScreen on resume.  Otherwise go through DeviceSelectScreen.
-            if active_session.is_ready:
+        if selected_mode is None:
+            selected_mode = await self.push_screen_wait(ModeSelectScreen())
+            if selected_mode is None:
+                self.exit()
+                return
+
+        # ------------------------------------------------------------------
+        # Step 4: Route based on Mode selection
+        # ------------------------------------------------------------------
+        if selected_mode == "migrate":
+            if active_session is None:
+                active_session = session_mgr.new_session()
+
+            # Main Migrate Mode loop
+            while True:
+                if active_session.is_ready:
+                    self.logger.info(
+                        "Session %s has scan data — jumping to AppListScreen",
+                        active_session.session_id,
+                    )
+                else:
+                    device_result = await self.push_screen_wait(
+                        DeviceSelectScreen(
+                            adb_path=adb_path,
+                            session=active_session,
+                            session_mgr=session_mgr,
+                            settings=self.settings,
+                        )
+                    )
+                    if device_result is None:
+                        # User pressed quit from DeviceSelectScreen
+                        break
+                    active_session = device_result
+
+                if not active_session.is_ready:
+                    break
+
+                src = active_session.source
+                tgt = active_session.target
                 self.logger.info(
-                    "Session %s has scan data — jumping to AppListScreen",
-                    active_session.session_id,
+                    "Starting AppListScreen: source=%s (%s), target=%s (%s)",
+                    src.serial if src else "?",
+                    src.model if src else "?",
+                    tgt.serial if tgt else "?",
+                    tgt.model if tgt else "?",
                 )
-            else:
-                device_result = await self.push_screen_wait(
-                    DeviceSelectScreen(
+
+                nav_result = await self.push_screen_wait(
+                    AppListScreen(
                         adb_path=adb_path,
                         session=active_session,
                         session_mgr=session_mgr,
                         settings=self.settings,
                     )
                 )
-                if device_result is None:
-                    # User pressed quit from DeviceSelectScreen
-                    break
-                active_session = device_result
 
-            if not active_session.is_ready:
-                # DeviceSelectScreen dismissed without completing scans (edge case)
-                break
+                if nav_result == "change_devices":
+                    active_session.source = None
+                    active_session.target = None
+                    session_mgr.save(active_session)
+                    continue
 
-            src = active_session.source
-            tgt = active_session.target
-            self.logger.info(
-                "Starting AppListScreen: source=%s (%s), target=%s (%s)",
-                src.serial if src else "?",
-                src.model if src else "?",
-                tgt.serial if tgt else "?",
-                tgt.model if tgt else "?",
-            )
+                break  # quit or session completed
 
-            nav_result = await self.push_screen_wait(
-                AppListScreen(
-                    adb_path=adb_path,
-                    session=active_session,
-                    session_mgr=session_mgr,
-                    settings=self.settings,
+        elif selected_mode == "per_device":
+            # Main Per Device Mode loop
+            while True:
+                device_info = await self.push_screen_wait(
+                    SingleDeviceSelectScreen(adb_path=adb_path)
                 )
-            )
+                if device_info is None:
+                    # Back to ModeSelectScreen
+                    self.run_flow()
+                    return
 
-            if nav_result == "change_devices":
-                # Reset the scan data so the user can re-select / re-scan;
-                # keep the session ID (preserves execution history for resumed items)
-                active_session.source = None
-                active_session.target = None
-                session_mgr.save(active_session)
-                continue
+                serial, model = device_info
+                self.logger.info("Selected single device: serial=%s model=%s", serial, model)
 
-            break   # quit or session completed
+                nav_result = await self.push_screen_wait(
+                    SingleDeviceAppScreen(
+                        adb_path=adb_path,
+                        serial=serial,
+                        model=model,
+                        settings=self.settings,
+                    )
+                )
+
+                if nav_result == "change_device":
+                    continue
+
+                break
 
         self.exit()
 

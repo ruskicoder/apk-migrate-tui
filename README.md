@@ -41,9 +41,17 @@ Cross-platform (Linux/macOS/Windows) - only depends on Python and `adb` being on
 
 ---
 
-## Connection Modes
+## Startup Mode Selection
 
-The TUI adapts to your hardware setup using two distinct connection modes. You can toggle between them in the Settings modal (`,` key) or using the `[m]` hotkey on the device selection screen:
+When you start the app (or choose "New Session"), you will land on the **Mode Selection Screen**:
+1. **Migrate Apps between two devices:** Compares an old device (SOURCE) and new device (TARGET) to migrate apps that are missing or have differing versions.
+2. **Manage Apps on a single device:** Focuses on a single connected device to perform standalone archiving, installs from the archive folder, or safe uninstalls.
+
+---
+
+## Migrate Mode (Dual vs. Single Cable)
+
+Migrate Mode adapts to your hardware setup using two distinct connection modes. You can toggle between them in the Settings modal (`,` key) or using the `[m]` hotkey on the device selection screen:
 
 ### 1. Dual-Cable Mode (Default)
 - **Scenario:** Both devices are connected simultaneously to your PC.
@@ -61,7 +69,20 @@ The TUI adapts to your hardware setup using two distinct connection modes. You c
 
 ---
 
-## Session Persistence & Crash Safety
+## Manage Single Device Mode
+
+Designed as a direct, real-time utility mode to perform package management on a single phone:
+- **Device Selection:** Choose one connected device from the listing.
+- **Union View:** Displays the union of all apps currently installed on the device AND those available in your local archive.
+  - Apps in the archive but not on the device display a device status of `[red]not installed[/red]`.
+  - Apps on the device but not in the archive display an archive status of `[dim]not archived[/dim]`.
+  - Apps on both sides display version matches or flag version discrepancies (e.g. `outdated` or `newer`).
+- **Interactive Actions:** Batch archive (`s`), batch install (`i`), and batch uninstall (`d`).
+- **Strict Uninstall Verification:** Uninstalling is a destructive action that deletes the app's user data. To confirm, you must type the keyword `uninstall` (case-insensitive) into the text-entry safety prompt.
+
+---
+
+## Session Persistence & Crash Safety (Migrate Mode)
 
 Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_id>.json`. This provides several enterprise-grade safety nets:
 
@@ -72,7 +93,7 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 
 ---
 
-## Features
+## Core Features & Safety
 
 - **Disk Space Pre-Flight Checks:** The confirmation dialog calculates the estimated size of your archive batch against the free space of your destination disk to prevent mid-batch write failures.
 - **Live Disk Usage Display:** While modifying the archive path in the Settings screen, a live-updating indicator reports disk space availability (colored green/yellow/red depending on the remaining space).
@@ -84,7 +105,14 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 
 ## Key Bindings
 
-### Device Selection Screen
+### Mode Selection Screen
+| Key | Action |
+|---|---|
+| `1` | Select Migrate Mode (Two Devices) |
+| `2` | Select Manage Single Device Mode |
+| `q` | Quit |
+
+### Device Selection Screen (Migrate Mode)
 | Key | Action |
 |---|---|
 | `r` | Refresh the list of live connected devices |
@@ -94,7 +122,14 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 | `c` | Continue to the package diff screen (saves selection state) |
 | `q` | Save session progress and quit the app |
 
-### App List Screen
+### Single Device Selection Screen (Per-Device Mode)
+| Key | Action |
+|---|---|
+| `r` | Refresh the list of live connected devices |
+| `c` | Confirm and select the highlighted device to manage (or press Enter) |
+| `q` | Return to the Mode Selection screen / Quit |
+
+### App List Screen (Migrate Mode)
 | Key | Action |
 |---|---|
 | `space` | Toggle selection on the highlighted package row |
@@ -111,11 +146,26 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 | `d` | Back to the Device Selection screen (resets active selection) |
 | `q` | Save session progress and quit the app |
 
+### Single Device App List Screen (Per-Device Mode)
+| Key | Action |
+|---|---|
+| `space` | Toggle selection on the highlighted package row |
+| `a` / `A` | Select all visible / Select none |
+| `s` | Archive selected apps from the device to the archive folder |
+| `i` | Install selected apps from the archive onto the device |
+| `d` | Uninstall selected apps from the device (requires typing `uninstall` verification) |
+| `r` | Rescan the device apps and reload archive manifests |
+| `escape` | Cancel batch action cleanly after the currently processing item finishes |
+| `/` | Focus the search input field to filter packages |
+| `,` | Open the Settings screen |
+| `c` | Back to the Single Device Selection screen |
+| `q` | Save session progress and quit the app |
+
 ---
 
 ## Developer Testing
 
-To set up development dependencies and run the complete test suite (60 unit and Textual UI integration tests):
+To set up development dependencies and run the complete test suite (62 unit and Textual UI integration tests):
 
 ```bash
 pip install -r requirements-dev.txt

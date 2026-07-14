@@ -127,7 +127,9 @@ async def test_full_flow_scan_select_archive(tmp_path, monkeypatch):
     app.settings.hide_identical = False  # see all apps including identical
 
     async with app.run_test(size=(120, 50)) as pilot:
-        # No incomplete sessions → DeviceSelectScreen is first
+        # Land on ModeSelectScreen first, select option 1 (Migrate)
+        await pilot.pause()
+        await pilot.press("1")
         await pilot.pause()
         screen = app.screen
         assert screen.__class__.__name__ == "DeviceSelectScreen"
@@ -229,6 +231,9 @@ async def test_install_flow_updates_status_to_identical(tmp_path, monkeypatch):
     app.settings.sessions_dir = str(tmp_path / "sessions")
 
     async with app.run_test(size=(120, 50)) as pilot:
+        # Land on ModeSelectScreen first, select option 1 (Migrate)
+        await pilot.pause()
+        await pilot.press("1")
         await pilot.pause()
         await pilot.press("s")
         for _ in range(40):
@@ -308,6 +313,9 @@ async def test_install_signature_mismatch_reports_explanation_and_does_not_mark_
     app.settings.sessions_dir = str(tmp_path / "sessions")
 
     async with app.run_test(size=(120, 50)) as pilot:
+        # Land on ModeSelectScreen first, select option 1 (Migrate)
+        await pilot.pause()
+        await pilot.press("1")
         await pilot.pause()
         await pilot.press("s")
         for _ in range(40):
