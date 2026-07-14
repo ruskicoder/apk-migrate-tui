@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apk-migrate-tui"
+version = "0.1.0"
+description = "Terminal UI to compare and migrate APKs between two Android devices over adb"
+requires-python = ">=3.10"
+dependencies = ["textual>=0.60,<9"]
+
+[project.scripts]
+apk-migrate-tui = "apk_migrate_tui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["apk_migrate_tui*"]
