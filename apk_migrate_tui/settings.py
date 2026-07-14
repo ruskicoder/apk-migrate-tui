@@ -20,6 +20,9 @@ class Settings:
     show_target_only: bool = False
     source_filter: str = SourceFilter.ALL_NON_SYSTEM.value
     third_party_only: bool = True                # -3 flag: exclude system apps entirely
+    sessions_dir: str = str(CONFIG_DIR / "sessions")  # where session JSON files are stored
+    cleanup_after_install: bool = False           # delete local APK archive after install
+    connection_mode: str = "dual"                 # "dual" | "single" cable mode
 
     @classmethod
     def load(cls) -> "Settings":
