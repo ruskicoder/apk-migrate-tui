@@ -14,7 +14,7 @@ logger = logging.getLogger("apk_migrate_tui")
 @dataclass
 class OpResult:
     package: str
-    action: str          # "scan" | "archive" | "install" | "uninstall"
+    action: str          # "archive" | "install" | "removed" | "hidden (system)" | "disabled (system)" | "uninstall" (failed)
     success: bool
     message: str
     skipped: bool = False
@@ -112,14 +112,35 @@ def install_package(
     return OpResult(package, "install", False, msg)
 
 
+_UNINSTALL_ACTION_LABELS: dict[adb.UninstallOutcome, str] = {
+    adb.UninstallOutcome.REMOVED: "removed",
+    adb.UninstallOutcome.HIDDEN:  "hidden (system)",
+    adb.UninstallOutcome.FAILED:  "uninstall",
+}
+
+
 def uninstall_package(adb_path: str, target_serial: str, package: str, keep_data: bool) -> OpResult:
     result = adb.uninstall_package(adb_path, target_serial, package, keep_data=keep_data)
-    if result.ok:
-        logger.warning("Uninstalled %s from %s (keep_data=%s)", package, target_serial, keep_data)
-        return OpResult(package, "uninstall", True, "Uninstalled.")
-    msg = result.combined_output.splitlines()[-1] if result.combined_output else "Uninstall failed."
-    logger.error("Uninstall failed for %s: %s", package, result.combined_output)
-    return OpResult(package, "uninstall", False, msg)
+    success = result.outcome != adb.UninstallOutcome.FAILED
+    action = _UNINSTALL_ACTION_LABELS[result.outcome]
+    if success:
+        logger.warning("Uninstalled %s from %s — outcome: %s", package, target_serial, result.outcome)
+    else:
+        logger.error("Uninstall failed for %s: %s", package, result.message)
+    return OpResult(package, action, success, result.message)
+
+
+def disable_package(adb_path: str, target_serial: str, package: str) -> OpResult:
+    """Freeze app for user 0 via pm disable-user. Does NOT remove it — explicit user action only."""
+    result = adb.disable_package_for_user(adb_path, target_serial, package)
+    ok = result.ok or "disabled" in result.stdout.lower()
+    if ok:
+        msg = f"App frozen. Cannot launch or update. Restore with: adb shell pm enable {package}"
+        logger.warning("Disabled %s on %s", package, target_serial)
+        return OpResult(package, "disabled (system)", True, msg)
+    raw = result.combined_output.splitlines()[-1] if result.combined_output else "Disable failed."
+    logger.error("Disable failed for %s: %s", package, result.combined_output)
+    return OpResult(package, "disable", False, raw)
 
 
 def archive_and_install(

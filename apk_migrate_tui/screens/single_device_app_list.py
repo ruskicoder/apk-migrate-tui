@@ -16,7 +16,7 @@ from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 from .. import adb
 from ..archive import ArchiveManager
 from ..models import ActionKind, AppInfo, SourceFilter
-from ..operations import archive_package, install_package, scan_device, uninstall_package
+from ..operations import archive_package, disable_package, install_package, scan_device, uninstall_package
 from ..settings import Settings
 from .dialogs import ConfirmScreen, MessageScreen
 from .settings_screen import SettingsScreen
@@ -70,6 +70,7 @@ class SingleDeviceAppScreen(Screen[str]):
         ("s", "archive_selected", "Archive to folder"),
         ("i", "install_selected", "Install from archive"),
         ("d", "uninstall_selected", "Uninstall from device"),
+        ("x", "disable_selected", "Disable (freeze) on device"),
         ("comma", "open_settings", "Settings"),
         ("r", "rescan", "Rescan"),
         ("escape", "cancel_batch", "Cancel batch"),
@@ -531,7 +532,14 @@ class SingleDeviceAppScreen(Screen[str]):
 
             if result.success:
                 ok_count += 1
-                self.log_widget.write(f"[green]ok[/green]    {e.package}: Uninstalled successfully.")
+                if result.action == "removed":
+                    label = "[green]removed[/green]"
+                    detail = "Fully removed from device."
+                else:
+                    # hidden (system) — app no longer visible/runnable for this user
+                    label = "[yellow]hidden — system app[/yellow]"
+                    detail = result.message
+                self.log_widget.write(f"[green]ok[/green]    {e.package}: {label}  {detail}")
                 e.device_app = None
 
                 # Clean up local archive if settings say so
@@ -546,7 +554,9 @@ class SingleDeviceAppScreen(Screen[str]):
                             self.log_widget.write(f"[yellow]warn[/yellow] {e.package}: Cleanup failed: {exc}")
             else:
                 fail_count += 1
-                self.log_widget.write(f"[red]FAIL[/red]  {e.package}: {result.message}")
+                self.log_widget.write(
+                    f"[red]FAIL[/red]  {e.package}: [red]failed[/red]  {result.message}"
+                )
 
             e.selected = False
             self._update_row(e)
@@ -554,5 +564,81 @@ class SingleDeviceAppScreen(Screen[str]):
         self.busy = False
         self._update_summary()
         summary = f"Uninstall done: {ok_count} ok, {fail_count} failed."
+        self.log_widget.write(f"[b]{summary}[/b]")
+        self.notify(summary, severity="information" if fail_count == 0 else "warning")
+
+    # ---- Action 4: Disable (freeze) ----
+    def action_disable_selected(self) -> None:
+        selected = [e for e in self._selected_actionable() if e.device_app is not None]
+        if not selected:
+            self.notify("Select installed apps to disable first.", severity="warning")
+            return
+
+        pkgs = [e.package for e in selected]
+
+        def _confirm_and_run(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            self._run_disable_batch(selected)
+
+        self.app.push_screen(
+            UninstallConfirmScreen(
+                "Confirm Batch Disable (Freeze)",
+                pkgs,
+                confirm_keyword="disable",
+                warning_text=(
+                    "Disable will FREEZE these apps. They cannot launch or receive updates.\n"
+                    "This is NOT a full uninstall. The APK remains on the device.\n"
+                    "Restore with: adb shell pm enable <package>"
+                ),
+            ),
+            _confirm_and_run,
+        )
+
+    @work(exclusive=True)
+    async def _run_disable_batch(self, selected: list[SingleAppEntry]) -> None:
+        self.busy = True
+        self._cancel_requested = False
+        total = len(selected)
+
+        self.log_widget.write(f"[b]Starting batch disable of {total} package(s)[/b]")
+        ok_count = fail_count = 0
+
+        for i, e in enumerate(selected, start=1):
+            if self._cancel_requested:
+                self.log_widget.write("[yellow]Batch disable cancelled by user.[/yellow]")
+                break
+
+            self._set_status(f"Disabling: {e.package} ({i}/{total})")
+
+            # Verify connection
+            devices = await asyncio.to_thread(adb.list_devices, self.adb_path)
+            if not any(d.serial == self.serial and d.is_ready for d in devices):
+                self.log_widget.write(f"[red]FAIL[/red]  {e.package}: Device disconnected.")
+                fail_count += 1
+                continue
+
+            result = await asyncio.to_thread(
+                disable_package, self.adb_path, self.serial, e.package
+            )
+
+            if result.success:
+                ok_count += 1
+                self.log_widget.write(
+                    f"[green]ok[/green]    {e.package}: [yellow]disabled — system app[/yellow]  {result.message}"
+                )
+                # App is frozen but still technically on device — clear device_app to
+                # reflect it can no longer run. A rescan will also confirm its status.
+                e.device_app = None
+            else:
+                fail_count += 1
+                self.log_widget.write(f"[red]FAIL[/red]  {e.package}: {result.message}")
+
+            e.selected = False
+            self._update_row(e)
+
+        self.busy = False
+        self._update_summary()
+        summary = f"Disable done: {ok_count} ok, {fail_count} failed."
         self.log_widget.write(f"[b]{summary}[/b]")
         self.notify(summary, severity="information" if fail_count == 0 else "warning")

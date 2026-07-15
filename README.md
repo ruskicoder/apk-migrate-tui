@@ -154,6 +154,7 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 | `s` | Archive selected apps from the device to the archive folder |
 | `i` | Install selected apps from the archive onto the device |
 | `d` | Uninstall selected apps from the device (requires typing `uninstall` verification) |
+| `x` | Disable (freeze) selected apps on the device — cannot launch or update, reversible (requires typing `disable` verification) |
 | `r` | Rescan the device apps and reload archive manifests |
 | `escape` | Cancel batch action cleanly after the currently processing item finishes |
 | `/` | Focus the search input field to filter packages |
@@ -165,7 +166,7 @@ Migration jobs are saved as JSON files in `~/.apk-migrate-tui/sessions/<session_
 
 ## Developer Testing
 
-To set up development dependencies and run the complete test suite (62 unit and Textual UI integration tests):
+To set up development dependencies and run the complete test suite (69 unit and Textual UI integration tests):
 
 ```bash
 pip install -r requirements-dev.txt

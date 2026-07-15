@@ -45,18 +45,32 @@ class UninstallConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, title: str, packages: list[str]) -> None:
+    def __init__(
+        self,
+        title: str,
+        packages: list[str],
+        confirm_keyword: str = "uninstall",
+        warning_text: str | None = None,
+    ) -> None:
         super().__init__()
         self._title = title
         self._packages = packages
+        self._keyword = confirm_keyword.lower()
+        self._warning_text = warning_text
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(f"[red][b]{self._title}[/b][/red]")
+            if self._warning_text:
+                warning = self._warning_text
+            else:
+                warning = (
+                    "[yellow]WARNING: Uninstalling will delete the app and ALL its local user data "
+                    "(saves, settings, logins) from the device![/yellow]"
+                )
             body_text = (
-                "[yellow]WARNING: Uninstalling will delete the app and ALL its local user data "
-                "(saves, settings, logins) from the device![/yellow]\n\n"
-                "The following package(s) will be uninstalled:\n"
+                warning + "\n\n"
+                "The following package(s) will be affected:\n"
                 + "\n".join(f"  • {pkg}" for pkg in self._packages[:20])
             )
             if len(self._packages) > 20:
@@ -64,20 +78,25 @@ class UninstallConfirmScreen(ModalScreen[bool]):
 
             yield Static(body_text, id="body")
             yield Static(
-                "Type the keyword [b][red]uninstall[/red][/b] below to confirm:",
+                f"Type the keyword [b][red]{self._keyword}[/red][/b] below to confirm:",
                 id="prompt_label",
             )
-            yield Input(placeholder="type uninstall here", id="confirmation_input")
+            yield Input(placeholder=f"type {self._keyword} here", id="confirmation_input")
             with Horizontal(id="buttons"):
                 yield Button("Cancel", id="cancel")
-                yield Button("Confirm Uninstall", id="confirm", variant="error", disabled=True)
+                yield Button(
+                    f"Confirm {self._keyword.capitalize()}",
+                    id="confirm",
+                    variant="error",
+                    disabled=True,
+                )
 
     def on_mount(self) -> None:
         self.query_one("#confirmation_input", Input).focus()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "confirmation_input":
-            is_valid = event.value.strip().lower() == "uninstall"
+            is_valid = event.value.strip().lower() == self._keyword
             self.query_one("#confirm", Button).disabled = not is_valid
 
     @on(Button.Pressed, "#cancel")

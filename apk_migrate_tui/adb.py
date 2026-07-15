@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
 from .models import AppInfo
@@ -237,9 +238,138 @@ def install_apks(adb_path: str, serial: str, local_apk_paths: list[str]) -> AdbR
     return _run_on(adb_path, serial, args, timeout=INSTALL_TIMEOUT)
 
 
-def uninstall_package(adb_path: str, serial: str, package: str, keep_data: bool = False) -> AdbResult:
-    args = ["uninstall"]
-    if keep_data:
-        args.append("-k")
-    args.append(package)
-    return _run_on(adb_path, serial, args, timeout=DEFAULT_TIMEOUT)
+# ---------------------------------------------------------------------------
+# Uninstall — typed outcome with 2-tier cascade + mandatory post-verify
+# ---------------------------------------------------------------------------
+
+class UninstallOutcome(str, Enum):
+    REMOVED  = "removed"   # fully removed (user-installed app, verified gone)
+    HIDDEN   = "hidden"    # system app: removed from user 0 profile, APK stays on /system
+    FAILED   = "failed"    # all tiers exhausted; app still active on device
+
+
+@dataclass
+class UninstallResult:
+    outcome: UninstallOutcome
+    raw: AdbResult
+    message: str
+
+
+_KNOWN_UNINSTALL_FAILURES: dict[str, str] = {
+    "DELETE_FAILED_INTERNAL_ERROR": (
+        "System app cannot be removed without root. "
+        "Try the Disable action to freeze it instead."
+    ),
+    "DELETE_FAILED_DEVICE_POLICY_MANAGER": (
+        "App is a device administrator and cannot be uninstalled. "
+        "Remove it as a device admin in Settings first, or use Disable."
+    ),
+    "DELETE_FAILED_OWNER_BLOCKED": (
+        "App is blocked by a device owner or enterprise policy."
+    ),
+}
+
+
+def explain_uninstall_failure(raw_output: str) -> str | None:
+    for code, explanation in _KNOWN_UNINSTALL_FAILURES.items():
+        if code in raw_output:
+            return f"{code}: {explanation}"
+    return None
+
+
+def check_package_installed_for_user(
+    adb_path: str, serial: str, package: str, user: int = 0
+) -> bool:
+    """Ground-truth post-uninstall verifier.
+
+    Runs ``pm list packages --user <N> <package>`` **without** the ``-u`` flag so
+    packages that have been per-user uninstalled but still reside on the read-only
+    /system partition are excluded from the output.
+
+    Returns True if the package is still visible/installed for that user,
+    False if it has been successfully removed from that user's view.
+    """
+    result = _run_on(
+        adb_path, serial,
+        ["shell", "pm", "list", "packages", "--user", str(user), package],
+        timeout=DEFAULT_TIMEOUT,
+    )
+    return f"package:{package}" in result.stdout
+
+
+def disable_package_for_user(
+    adb_path: str, serial: str, package: str, user: int = 0
+) -> AdbResult:
+    """Freeze an app for a specific user via ``pm disable-user``.
+
+    This is a reversible alternative to uninstalling protected system apps:
+    the app cannot launch or receive updates, but the APK remains on the
+    device.  To re-enable: ``adb shell pm enable --user <N> <package>``.
+    """
+    return _run_on(
+        adb_path, serial,
+        ["shell", "pm", "disable-user", "--user", str(user), package],
+        timeout=DEFAULT_TIMEOUT,
+    )
+
+
+def uninstall_package(
+    adb_path: str, serial: str, package: str, keep_data: bool = False
+) -> UninstallResult:
+    """2-tier uninstall cascade with mandatory per-tier post-action verification.
+
+    Tier 1 — ``adb uninstall [-k] <pkg>``
+        Works for normal user-installed apps.  For system apps that received
+        Play Store updates, Android removes the update layer and returns
+        ``Success`` (exit 0) even though the factory APK on /system is still
+        active.  The post-verify step catches this false-positive and lets the
+        cascade fall through to Tier 2.
+
+    Tier 2 — ``adb shell pm uninstall [-k] --user 0 <pkg>``
+        Removes the package from the primary user's profile without touching
+        the read-only system partition.  Outcome is ``HIDDEN``; the app is
+        invisible and non-runnable for user 0 but can be restored via
+        ``pm install-existing <pkg>``.
+
+    If both tiers fail (or a nominal ``Success`` still leaves the package
+    present on post-verify), outcome is ``FAILED`` with an actionable message.
+    """
+    keep_flag = ["-k"] if keep_data else []
+
+    # --- Tier 1: standard adb uninstall ---
+    r1 = _run_on(adb_path, serial, ["uninstall", *keep_flag, package], timeout=DEFAULT_TIMEOUT)
+    if r1.ok:
+        still_present = check_package_installed_for_user(adb_path, serial, package)
+        if not still_present:
+            return UninstallResult(UninstallOutcome.REMOVED, r1, "Fully removed.")
+        # r1.ok == True but package is still present → Tier 1 only stripped a Play
+        # Store update layer; factory APK on /system is still active.  Fall through.
+
+    # --- Tier 2: pm uninstall --user 0 ---
+    r2 = _run_on(
+        adb_path, serial,
+        ["shell", "pm", "uninstall", *keep_flag, "--user", "0", package],
+        timeout=DEFAULT_TIMEOUT,
+    )
+    if "Success" in r2.stdout:
+        still_present = check_package_installed_for_user(adb_path, serial, package)
+        if not still_present:
+            return UninstallResult(
+                UninstallOutcome.HIDDEN, r2,
+                "Removed from this device profile. "
+                "System APK remains on /system (not visible or runnable for this user). "
+                "Restore with: adb shell pm install-existing " + package,
+            )
+        # Extremely rare: pm reported Success but package still present (device bug).
+        # Fall through to FAILED.
+
+    # --- Both tiers exhausted ---
+    raw_err = (
+        explain_uninstall_failure(r2.combined_output)
+        or (r2.combined_output.splitlines()[-1] if r2.combined_output else "")
+        or "All uninstall strategies failed."
+    )
+    return UninstallResult(
+        UninstallOutcome.FAILED, r2,
+        f"{raw_err} — If this is a protected system app, try the Disable action instead.",
+    )

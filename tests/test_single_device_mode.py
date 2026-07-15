@@ -132,7 +132,8 @@ async def test_single_device_full_flow(tmp_path, monkeypatch):
 
     def fake_uninstall_package(adb_path, serial, package, keep_data=False):
         uninstalled_packages.append(package)
-        return adb.AdbResult(ok=True, returncode=0, stdout="Success", stderr="")
+        raw = adb.AdbResult(ok=True, returncode=0, stdout="Success", stderr="")
+        return adb.UninstallResult(adb.UninstallOutcome.REMOVED, raw, "Fully removed.")
 
     monkeypatch.setattr(adb, "uninstall_package", fake_uninstall_package)
 
